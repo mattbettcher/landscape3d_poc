@@ -1,8 +1,5 @@
-use bevy::{prelude::*, input::mouse::MouseMotion, render::{options::WgpuOptions, render_resource::{WgpuFeatures, PrimitiveTopology}, mesh::Indices}, pbr::wireframe::{WireframePlugin, WireframeConfig}};
+use bevy::{prelude::*, input::mouse::MouseMotion, render::{options::WgpuOptions, render_resource::{WgpuFeatures, PrimitiveTopology}, mesh::Indices, view::VisibleEntities, primitives::Frustum}, pbr::wireframe::{WireframePlugin, WireframeConfig}};
 use image::{ImageBuffer, Luma, ImageError};
-//use terrain::load_terrain_bitmap;
-
-//mod terrain;
 
 fn main() {
     App::new()
@@ -15,9 +12,12 @@ fn main() {
         .add_plugin(WireframePlugin)
         .add_startup_system(setup)
         .add_system(camera_controller)
+        .add_system(spin_object)
         .run();
 }
 
+#[derive(Component)]
+struct Object;
 /// set up a simple 3D scene
 fn setup(
     mut commands: Commands,
@@ -26,30 +26,30 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // To draw the wireframe on all entities, set this to 'true'
-    wireframe_config.global = true;
+    wireframe_config.global = false;
 
     // add entities to the world
     // cube
     commands.spawn_bundle(PbrBundle {
         mesh: meshes.add(Mesh::from(shape::Cube { size: 1.0 })),
         material: materials.add(Color::rgb(0.8, 0.7, 0.6).into()),
-        transform: Transform::from_xyz(0.0, 0.5, 0.0),
+        transform: Transform::from_xyz(2.0, 1.0, 2.0),
         ..Default::default()
-    });
+    }).insert(Object);
     // lights
     commands.spawn_bundle(PointLightBundle {
         point_light: PointLight {
-            intensity: 15000.0,
+            intensity: 1500.0,
             shadows_enabled: true,
             ..Default::default()
         },
-        transform: Transform::from_xyz(20.0, 20.0, 20.0),
+        transform: Transform::from_xyz(5.0, 5.0, 5.0),
         ..Default::default()
     });
     // ambient light
     commands.insert_resource(AmbientLight {
         color: Color::WHITE,
-        brightness: 0.5,
+        brightness: 0.25,
     });
     // camera
     commands.spawn_bundle(PerspectiveCameraBundle {
@@ -57,9 +57,11 @@ fn setup(
         ..Default::default()
     }).insert(CameraController::default());
 
+    //commands.spawn_bundle(OrthographicCameraBundle::new_3d())
+    //.insert(CameraController::default());
 
     // terrain
-    let terrain_mesh = load_terrain_bitmap("terrain.png", TerrainImageLoadOptions { max_image_height: 3.0, pixel_side_length: 0.1 }).unwrap();
+    let terrain_mesh = load_terrain_bitmap("terrain.png", TerrainImageLoadOptions { max_image_height: 0.15, pixel_side_length: 0.1 }).unwrap();
     commands.spawn_bundle(PbrBundle {
         mesh: meshes.add(Mesh::from(terrain_mesh)),
         material: materials.add(Color::rgb(0.8, 0.7, 0.6).into()),
@@ -104,30 +106,81 @@ fn load_terrain_bitmap(filename: &str, options: TerrainImageLoadOptions) -> Resu
     let heightmap = terrain_bitmap.as_luma16().unwrap();
 
     let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    let mut normals = Vec::new();
+
+    let size = options.pixel_side_length;
+    let mut i: u32 = 0;
 
     for y in 0..heightmap.height() {
         for x in 0..heightmap.width() {
             let height = sample_vertex_height(y as i32, x as i32, heightmap);
-            vertices.push([x as f32, height * options.max_image_height, y as f32])
+            let height_down = sample_vertex_height((y as i32 + 1).min(heightmap.height() as i32), x as i32, heightmap);
+            let height_right = sample_vertex_height(y as i32, (x as i32 + 1).min(heightmap.width() as i32), heightmap);
+
+            // top face
+            vertices.push([x as f32 * size, height * options.max_image_height, y as f32 * size]);
+            vertices.push([(x + 1) as f32 * size, height * options.max_image_height, y as f32 * size]);
+            vertices.push([x as f32 * size, height * options.max_image_height, (y + 1) as f32 * size]);
+            vertices.push([(x + 1) as f32 * size, height * options.max_image_height, (y + 1) as f32 * size]);
+            // right face
+            vertices.push([(x + 1) as f32 * size, height * options.max_image_height, y as f32 * size]);
+            vertices.push([(x + 1) as f32 * size, height * options.max_image_height, (y + 1) as f32 * size]);
+            vertices.push([(x + 1) as f32 * size, height_right * options.max_image_height, y as f32 * size]);
+            vertices.push([(x + 1) as f32 * size, height_right * options.max_image_height, (y + 1) as f32 * size]);
+            // bottom face
+            vertices.push([x as f32 * size, height * options.max_image_height, (y + 1) as f32 * size]);
+            vertices.push([(x + 1) as f32 * size, height * options.max_image_height, (y + 1) as f32 * size]);
+            vertices.push([x as f32 * size, height_down * options.max_image_height, (y + 1) as f32 * size]);
+            vertices.push([(x + 1) as f32 * size, height_down * options.max_image_height, (y + 1) as f32 * size]);
+            // normals
+            normals.push([0.0, 1.0, 0.0]);
+            normals.push([0.0, 1.0, 0.0]);
+            normals.push([0.0, 1.0, 0.0]);
+            normals.push([0.0, 1.0, 0.0]);
+            // flip normals if needed
+            let d = if height > height_right { 1.0 } else { -1.0 };
+            normals.push([d, 0.0, 0.0]);
+            normals.push([d, 0.0, 0.0]);
+            normals.push([d, 0.0, 0.0]);
+            normals.push([d, 0.0, 0.0]);
+            let d = if height > height_down { 1.0 } else { -1.0 };
+            normals.push([0.0, 0.0, d]);
+            normals.push([0.0, 0.0, d]);
+            normals.push([0.0, 0.0, d]);
+            normals.push([0.0, 0.0, d]);
+            // bottom face
+            //vertices.push([x as f32 * size, height_down * options.max_image_height, (y + 1) as f32 * size]);
+            // top face
+            indices.push(i);
+            indices.push(i+3);
+            indices.push(i+1);
+
+            indices.push(i);
+            indices.push(i+2);
+            indices.push(i+3);
+
+            // right face?
+            indices.push(i+4);
+            indices.push(i+5);
+            indices.push(i+7);
+
+            indices.push(i+4);
+            indices.push(i+7);
+            indices.push(i+6);
+            //// bottom face?
+            indices.push(i+8);
+            indices.push(i+10);
+            indices.push(i+11);
+
+            indices.push(i+8);
+            indices.push(i+11);
+            indices.push(i+9);
+
+            i += 12; // for our vertex stride
         }
     }
 
-    let mut indices = Vec::new();
-
-    for y in 0..heightmap.height()-1 {
-        for x in 0..heightmap.width()-1 {
-            // 2 triangles per cell
-            indices.push(y * heightmap.width() + x);
-            indices.push((y+1) * heightmap.width() + x+1);
-            indices.push(y * heightmap.width() + x+1);
-
-            indices.push(y * heightmap.width() + x);
-            indices.push((y+1) * heightmap.width() + x);
-            indices.push((y+1) * heightmap.width() + x+1);
-        }
-    }
-
-    let normals = vec![[0.0, 1.0, 0.0]; vertices.len()];
     let uvs = vec![[0.0, 0.0]; vertices.len()];
 
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
@@ -177,6 +230,16 @@ impl Default for CameraController {
             velocity: Vec3::ZERO,
         }
     }
+}
+
+fn spin_object(
+    time: Res<Time>,
+    mut q: Query<&mut Transform, With<Object>>
+){
+    let dt = time.delta_seconds();
+
+    let mut t = q.single_mut();
+    t.rotate(Quat::from_rotation_y(0.25 * dt));
 }
 
 fn camera_controller(

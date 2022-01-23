@@ -1,4 +1,4 @@
-use bevy::{prelude::*, input::mouse::MouseMotion, render::{options::WgpuOptions, render_resource::{WgpuFeatures, PrimitiveTopology}, mesh::Indices, view::VisibleEntities, primitives::Frustum}, pbr::wireframe::{WireframePlugin, WireframeConfig}};
+use bevy::{prelude::*, input::mouse::MouseMotion, render::{options::WgpuOptions, render_resource::{WgpuFeatures, PrimitiveTopology}, mesh::Indices, view::VisibleEntities, primitives::Frustum}, pbr::wireframe::{WireframePlugin, WireframeConfig}, sprite::MaterialMesh2dBundle};
 use image::{ImageBuffer, Luma, ImageError};
 
 fn main() {
@@ -12,7 +12,7 @@ fn main() {
         .add_plugin(WireframePlugin)
         .add_startup_system(setup)
         .add_system(camera_controller)
-        .add_system(spin_object)
+        //.add_system(spin_object)
         .run();
 }
 
@@ -24,18 +24,21 @@ fn setup(
     mut wireframe_config: ResMut<WireframeConfig>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>
 ) {
     // To draw the wireframe on all entities, set this to 'true'
     wireframe_config.global = false;
 
     // add entities to the world
-    // cube
-    commands.spawn_bundle(PbrBundle {
-        mesh: meshes.add(Mesh::from(shape::Cube { size: 1.0 })),
-        material: materials.add(Color::rgb(0.8, 0.7, 0.6).into()),
-        transform: Transform::from_xyz(2.0, 1.0, 2.0),
+    let texture_handle = asset_server.load("unwrap_helper.png");
+
+    let material_handle = materials.add(StandardMaterial {
+        base_color_texture: Some(texture_handle.clone()),
+        alpha_mode: AlphaMode::Opaque,
+        unlit: false,
         ..Default::default()
-    }).insert(Object);
+    });
+
     // lights
     commands.spawn_bundle(PointLightBundle {
         point_light: PointLight {
@@ -60,12 +63,12 @@ fn setup(
     //commands.spawn_bundle(OrthographicCameraBundle::new_3d())
     //.insert(CameraController::default());
 
+
     // terrain
-    let terrain_mesh = load_terrain_bitmap("terrain.png", TerrainImageLoadOptions { max_image_height: 0.15, pixel_side_length: 0.1 }).unwrap();
+    let terrain_mesh = load_terrain_bitmap("terrain.png", TerrainImageLoadOptions { max_image_height: 0.25, pixel_side_length: 0.1 }).unwrap();
     commands.spawn_bundle(PbrBundle {
         mesh: meshes.add(Mesh::from(terrain_mesh)),
-        material: materials.add(Color::rgb(0.8, 0.7, 0.6).into()),
-        //transform: Transform::from_translation(Vec3::new(0.0, 0.0, 0.0)),
+        material: material_handle,
         ..Default::default()
     });
 }
@@ -108,6 +111,7 @@ fn load_terrain_bitmap(filename: &str, options: TerrainImageLoadOptions) -> Resu
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
     let mut normals = Vec::new();
+    let mut uvs = Vec::new();
 
     let size = options.pixel_side_length;
     let mut i: u32 = 0;
@@ -133,6 +137,22 @@ fn load_terrain_bitmap(filename: &str, options: TerrainImageLoadOptions) -> Resu
             vertices.push([(x + 1) as f32 * size, height * options.max_image_height, (y + 1) as f32 * size]);
             vertices.push([x as f32 * size, height_down * options.max_image_height, (y + 1) as f32 * size]);
             vertices.push([(x + 1) as f32 * size, height_down * options.max_image_height, (y + 1) as f32 * size]);
+            // uvs - top face
+            uvs.push([0.0, 0.0]);
+            uvs.push([1.0, 0.0]);
+            uvs.push([0.0, 1.0]);
+            uvs.push([1.0, 1.0]);
+            // NOTE(matt): these might need flipped if the face is the wrong way, just like the normals need flipped
+            // uvs - right face
+            uvs.push([1.0, 0.0]);
+            uvs.push([0.0, 0.0]);
+            uvs.push([1.0, 1.0]);
+            uvs.push([0.0, 1.0]);
+            // uvs - bottom face
+            uvs.push([0.0, 0.0]);
+            uvs.push([1.0, 0.0]);
+            uvs.push([0.0, 1.0]);
+            uvs.push([1.0, 1.0]);
             // normals
             normals.push([0.0, 1.0, 0.0]);
             normals.push([0.0, 1.0, 0.0]);
@@ -149,8 +169,6 @@ fn load_terrain_bitmap(filename: &str, options: TerrainImageLoadOptions) -> Resu
             normals.push([0.0, 0.0, d]);
             normals.push([0.0, 0.0, d]);
             normals.push([0.0, 0.0, d]);
-            // bottom face
-            //vertices.push([x as f32 * size, height_down * options.max_image_height, (y + 1) as f32 * size]);
             // top face
             indices.push(i);
             indices.push(i+3);
@@ -180,8 +198,6 @@ fn load_terrain_bitmap(filename: &str, options: TerrainImageLoadOptions) -> Resu
             i += 12; // for our vertex stride
         }
     }
-
-    let uvs = vec![[0.0, 0.0]; vertices.len()];
 
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
     mesh.set_indices(Some(Indices::U32(indices)));
